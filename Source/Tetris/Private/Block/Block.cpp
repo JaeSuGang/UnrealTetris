@@ -1,10 +1,12 @@
 
-#include "Main/Block.h"
+#include "Block/Block.h"
 
 #include "Components/StaticMeshComponent.h"
 
 ABlock::ABlock()
 {
+	SpawnCollisionHandlingMethod = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
 	DefaultSceneComponent = CreateDefaultSubobject<USceneComponent>(TEXT("DefaultSceneComponent"));
 	RootComponent = DefaultSceneComponent;
 
@@ -15,6 +17,12 @@ ABlock::ABlock()
 void ABlock::BeginPlay()
 {
 	Super::BeginPlay();
-	
+
+
+}
+
+void ABlock::SetColor(UMaterialInterface* NewMaterial)
+{
+	StaticMeshComponent->SetMaterial(0, NewMaterial);
 }
 
