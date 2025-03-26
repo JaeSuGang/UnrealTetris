@@ -13,6 +13,7 @@
 #include "Engine/OverlapResult.h"
 
 #include "Main/MainPlayerController.h"
+#include "Block/PlayBlock.h"
 
 AMainCharacter::AMainCharacter()
 {
@@ -55,7 +56,7 @@ void AMainCharacter::SetupPlayerInputComponent(UInputComponent* NewInputComponen
 	{
 		EnhancedInput->BindAction(BlockLeftIA, ETriggerEvent::Started, this, &AMainCharacter::MoveControllingBlockLeft);
 		EnhancedInput->BindAction(BlockRightIA, ETriggerEvent::Started, this, &AMainCharacter::MoveControllingBlockRight);
-		EnhancedInput->BindAction(BlockDownIA, ETriggerEvent::Triggered, this, &AMainCharacter::MoveControllingBlockDown);
+		EnhancedInput->BindAction(BlockDownIA, ETriggerEvent::Started, this, &AMainCharacter::MoveControllingBlockDown);
 		EnhancedInput->BindAction(BlockUpIA, ETriggerEvent::Started, this, &AMainCharacter::MoveControllingBlockUp);
 		EnhancedInput->BindAction(BlockRotateIA, ETriggerEvent::Started, this, &AMainCharacter::RotateControllingBlock);
 	}
@@ -89,21 +90,44 @@ void AMainCharacter::SpawnRandomNewBlock()
 
 void AMainCharacter::CheckBlockComplete()
 {
-	FCollisionShape OverlapBox = FCollisionShape::MakeBox(FVector(1.0f, (BoardWidth - 1) * BlockLength, 1.0f));
+	FCollisionShape OverlapBox = FCollisionShape::MakeBox(FVector(1.0f, (BoardWidth - 1) * BlockLength / 2.0f, 1.0f));
 
-	for (int i = 0; i < BoardHeight; ++i)
+	int i = 0;
+	while (i < BoardHeight)
 	{
+		bool bDestroyed = false;
 		TArray<FOverlapResult> OverlapResults{};
 		GetWorld()->OverlapMultiByObjectType(OverlapResults, GetActorLocation() + FVector{ 0.0f, (BoardWidth - 1) * BlockLength / 2.0f, i * BlockLength }, FQuat::Identity, FCollisionObjectQueryParams::AllDynamicObjects, OverlapBox, FCollisionQueryParams::DefaultQueryParam);
-		if (OverlapResults.Num() >= BoardWidth)
+
+		TArray<APlayBlock*> OverlappedPlayBlocks{};
+
+		for (FOverlapResult& OverlapRes : OverlapResults)
 		{
-			for (FOverlapResult& OverlapRes : OverlapResults)
+			if (APlayBlock* BlockToDestroy = Cast<APlayBlock>(OverlapRes.GetActor()))
 			{
-				if (ABlock* BlockToDestroy = Cast<ABlock>(OverlapRes.GetActor()))
-				{
-					BlockToDestroy->Destroy();
-				}
+				OverlappedPlayBlocks.Add(BlockToDestroy);
 			}
+		}
+
+		if (OverlappedPlayBlocks.Num() >= BoardWidth)
+		{
+			bDestroyed = true;
+			for (APlayBlock* BlockToDestroy : OverlappedPlayBlocks)
+			{
+				BlockToDestroy->Destroy();
+			}
+		}
+
+		if (bDestroyed)
+		{
+			for (APlayBlock* StackedBlock : StackedBlocks)
+			{
+				StackedBlock->AddActorWorldOffset(FVector{ 0.0f, 0.0f, -BlockLength});
+			}
+		}
+		else
+		{
+			i++;
 		}
 	}
 }
@@ -139,7 +163,8 @@ void AMainCharacter::SetBoardSize(int nWidth, int nHeight)
 		{
 			if (j == -1 || (i == -1 || i == nWidth))
 			{
-				ABlock* NewBoundary = GetWorld()->SpawnActor<ABlock>(BlockClass);
+				ABlock* NewBoundary = GetWorld()->SpawnActor<ABlock>(BoundaryBlockClass);
+				BoundaryBlocks.Add(NewBoundary);
 				NewBoundary->SetColor(BlockTypeRow->Material);
 				NewBoundary->SetActorLocation(GetActorLocation());
 				NewBoundary->AddActorWorldOffset(FVector{0.0f, BlockLength * i, BlockLength * j });
@@ -152,7 +177,7 @@ void AMainCharacter::SetBoardSize(int nWidth, int nHeight)
 
 void AMainCharacter::DestroyControllingBlocks()
 {
-	for (ABlock* ControllingBlock : ControllingBlocks)
+	for (APlayBlock* ControllingBlock : ControllingBlocks)
 	{
 		ControllingBlock->Destroy();
 	}
@@ -175,7 +200,7 @@ bool AMainCharacter::SpawnControllingBlocks(EBlockShapeAndColor Color, FVector P
 
 	for (int i = 0; i < 4; ++i)
 	{
-		ABlock* NewBlock = GetWorld()->SpawnActor<ABlock>(BlockClass);
+		APlayBlock* NewBlock = GetWorld()->SpawnActor<APlayBlock>(PlayBlockClass);
 		NewBlock->SetActorLocation(PivotPosition);
 		switch (NewDirection)
 		{
@@ -213,16 +238,112 @@ void AMainCharacter::MoveControllingBlockLeft()
 {
 	BlockFocusLocation.Y -= 40.0f;
 
-	DestroyControllingBlocks();
-	SpawnControllingBlocks(ControllingBlockShapeAndColor, BlockFocusLocation, ControllingBlockDirection);
+	bool bIsHit = false;
+	FBlockTypeInfoRow& FoundRow = FindBlockInfoRowByEnum(ControllingBlockShapeAndColor);
+	TArray<FOverlapResult> OverlapResults{};
+
+	for (int i = 0; i < 4; ++i)
+	{
+		TArray<FVector>* DirectionToApply{};
+		switch (ControllingBlockDirection)
+		{
+		case 0:
+			DirectionToApply = &FoundRow.DirectionA;
+			break;
+		case 1:
+			DirectionToApply = &FoundRow.DirectionB;
+			break;
+		case 2:
+			DirectionToApply = &FoundRow.DirectionC;
+			break;
+		case 3:
+			DirectionToApply = &FoundRow.DirectionD;
+			break;
+		default:
+			break;
+		}
+
+		FVector OverlapCheckLocation = BlockFocusLocation + (*DirectionToApply)[i];
+		GetWorld()->OverlapMultiByObjectType(OverlapResults, OverlapCheckLocation, FQuat{}, FCollisionObjectQueryParams::AllDynamicObjects, FCollisionShape::MakeSphere(BlockLength / 2.0f), FCollisionQueryParams::DefaultQueryParam);
+	}
+
+	for (FOverlapResult& OverlapResult : OverlapResults)
+	{
+		ABlock* CollidedSomething = reinterpret_cast<ABlock*>(OverlapResult.GetActor());
+
+		if (!ControllingBlocks.Contains(CollidedSomething) && CollidedSomething != reinterpret_cast<ABlock*>(this))
+		{
+			bIsHit = true;
+			break;
+		}
+	}
+
+	if (bIsHit)
+	{
+		BlockFocusLocation.Y += 40.0f;
+		return;
+	}
+	else
+	{
+		DestroyControllingBlocks();
+		SpawnControllingBlocks(ControllingBlockShapeAndColor, BlockFocusLocation, ControllingBlockDirection);
+	}
 }
 
 void AMainCharacter::MoveControllingBlockRight()
 {
 	BlockFocusLocation.Y += 40.0f;
 
-	DestroyControllingBlocks();
-	SpawnControllingBlocks(ControllingBlockShapeAndColor, BlockFocusLocation, ControllingBlockDirection);
+	bool bIsHit = false;
+	FBlockTypeInfoRow& FoundRow = FindBlockInfoRowByEnum(ControllingBlockShapeAndColor);
+	TArray<FOverlapResult> OverlapResults{};
+
+	for (int i = 0; i < 4; ++i)
+	{
+		TArray<FVector>* DirectionToApply{};
+		switch (ControllingBlockDirection)
+		{
+		case 0:
+			DirectionToApply = &FoundRow.DirectionA;
+			break;
+		case 1:
+			DirectionToApply = &FoundRow.DirectionB;
+			break;
+		case 2:
+			DirectionToApply = &FoundRow.DirectionC;
+			break;
+		case 3:
+			DirectionToApply = &FoundRow.DirectionD;
+			break;
+		default:
+			break;
+		}
+
+		FVector OverlapCheckLocation = BlockFocusLocation + (*DirectionToApply)[i];
+		GetWorld()->OverlapMultiByObjectType(OverlapResults, OverlapCheckLocation, FQuat{}, FCollisionObjectQueryParams::AllDynamicObjects, FCollisionShape::MakeSphere(BlockLength / 2.0f), FCollisionQueryParams::DefaultQueryParam);
+	}
+
+	for (FOverlapResult& OverlapResult : OverlapResults)
+	{
+		ABlock* CollidedSomething = reinterpret_cast<ABlock*>(OverlapResult.GetActor());
+
+		if (!ControllingBlocks.Contains(CollidedSomething) && CollidedSomething != reinterpret_cast<ABlock*>(this))
+		{
+			bIsHit = true;
+			break;
+		}
+	}
+
+	if (bIsHit)
+	{
+		BlockFocusLocation.Y -= 40.0f;
+		return;
+	}
+	else
+	{
+		DestroyControllingBlocks();
+		SpawnControllingBlocks(ControllingBlockShapeAndColor, BlockFocusLocation, ControllingBlockDirection);
+	}
 }
 
 void AMainCharacter::MoveControllingBlockDown()
@@ -271,6 +392,7 @@ void AMainCharacter::MoveControllingBlockDown()
 
 	if (bIsHit)
 	{
+		StackedBlocks += ControllingBlocks;
 		CheckBlockComplete();
 		SpawnRandomNewBlock();
 	}

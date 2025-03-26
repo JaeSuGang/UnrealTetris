@@ -15,6 +15,7 @@ struct FInputActionValue;
 
 class UCameraComponent;
 class ABlock;
+class APlayBlock;
 class UInputAction;
 class UInputMappingContext;
 
@@ -90,7 +91,10 @@ public:
 	UInputAction* BlockRotateIA;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Tetris)
-	TSubclassOf<ABlock> BlockClass;
+	TSubclassOf<APlayBlock> PlayBlockClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Tetris)
+	TSubclassOf<ABlock> BoundaryBlockClass;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Tetris, meta = (AllowedStructTypes = "FBlockTypeInfoRow"))
 	UDataTable* BlockTypeInfoTable;
@@ -110,7 +114,10 @@ protected:
 	AActor* CameraActor;
 
 	UPROPERTY(BlueprintReadWrite)
-	TArray<ABlock*> ControllingBlocks;
+	TArray<APlayBlock*> ControllingBlocks;
+
+	UPROPERTY(BlueprintReadWrite)
+	TArray<APlayBlock*> StackedBlocks;
 
 	UPROPERTY(BlueprintReadWrite)
 	TArray<ABlock*> BoundaryBlocks;
